@@ -8,7 +8,7 @@ ASM = nasm
 all: update_image bochs
 
 %.bin: %.asm
-	@echo 编译 bootloader 文件
+	@echo ========== 编译 bootloader 文件 ==========
 	$(ASM) $< -o $@
 
 new_image: $(S_BINS)
@@ -17,6 +17,7 @@ new_image: $(S_BINS)
 update_image:
 	sudo mount floppy/boot.img mnt/ -t vfat -o loop
 	sudo cp boot/loader.bin mnt
+	sudo cp boot/kernel.bin mnt
 	sudo sync
 	sudo umount mnt/
 
@@ -24,4 +25,4 @@ bochs:
 	make -C $(shell pwd)/floppy bochs
 
 clean:
-	rm $(S_BINS)
+	rm -rf $(S_BINS)
