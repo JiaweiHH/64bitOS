@@ -483,17 +483,19 @@ GO_TO_TMP_Protect:
   jz no_support           ; ZF(zero) 标志被置位则跳转
 
 ; ======= init temporary page table 0x90000
-  ; 页目录
-  mov	dword	[0x90000],	0x91007
+  ; 这里的页表是 IA-32e 模式的页表，页表项大小为 8B
+  
+  ; PML4
+  mov	dword	[0x90000],	0x91007   ; 映射 0 地址开始的地址
 	mov	dword	[0x90004],	0x00000
 	mov	dword	[0x90800],	0x91007
 	mov	dword	[0x90804],	0x00000
 
-  ; 一级页表
+  ; PDPT
 	mov	dword	[0x91000],	0x92007
 	mov	dword	[0x91004],	0x00000
 
-  ; 二级页表
+  ; PDT
 	mov	dword	[0x92000],	0x000083
 	mov	dword	[0x92004],	0x000000
 
@@ -511,6 +513,9 @@ GO_TO_TMP_Protect:
 
 	mov	dword	[0x92028],	0xa00083
 	mov	dword	[0x9202c],	0x000000
+
+  ; 后面不需要 PT 了，这是因为在 PDTE 里面的第 7bit 置为 1了，
+  ; 说明采用了 2MB 的页大小，所以不需要下一级页表了
 
 ; ======= load GDTR
   db 0x66
