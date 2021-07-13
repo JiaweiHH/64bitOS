@@ -7,11 +7,13 @@ BOOT_OBJECTS = $(patsubst %.asm, %.bin, $(BOOT_SOURCES))
 
 
 ASM = nasm
-CFLAGES := -mcmodel=large -fno-builtin -m64 -c
-LDFLAGS := -b elf64-x86-64 -T scripts/kernel.lds
+CFLAGES := -mcmodel=large -fno-builtin -m64 -fno-stack-protector -O2 -c -I include
+
+# 会出现重复定义的行为，使用链接器的 -z muldefs 参数表示当出现重复定义的时候只使用其中的一个
+LDFLAGS := -b elf64-x86-64 -z muldefs -T scripts/kernel.lds
 
 .PHONY: update_image mount_image umount_image clean clear_image bochs
-all: system update_image
+all: system
 
 %.bin: %.asm
 	@echo 编译 boot 文件 $< ...
@@ -26,7 +28,7 @@ all: system update_image
 system: $(S_OBJECTS) $(C_OBJECTS)
 	ld $(LDFLAGS) -o $@ $^
 
-bochs:
+bochs: update_image
 	bochs -f tools/bochsrc
 
 clear_image: $(BOOT_OBJECTS)

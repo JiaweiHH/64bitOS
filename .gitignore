@@ -2,3 +2,4 @@
 *.bin
 system
 boot.img
+settings.json
