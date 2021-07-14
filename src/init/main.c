@@ -44,6 +44,9 @@ void Start_Kernel(void) {
 
   color_printk(YELLOW, BLACK, "Hello World!\n");
 
+  i = 1 / 0;
+  if(i > 0)
+    color_printk(YELLOW, BLACK, "Hello World!\n");
   while(1)
     ;
 }
