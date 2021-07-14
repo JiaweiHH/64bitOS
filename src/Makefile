@@ -7,7 +7,7 @@ BOOT_OBJECTS = $(patsubst %.asm, %.bin, $(BOOT_SOURCES))
 
 
 ASM = nasm
-CFLAGES := -mcmodel=large -fno-builtin -m64 -fno-stack-protector -O2 -c -I include
+CFLAGES := -mcmodel=large -fno-builtin -m64 -fno-stack-protector -c -I include
 
 # 会出现重复定义的行为，使用链接器的 -z muldefs 参数表示当出现重复定义的时候只使用其中的一个
 LDFLAGS := -b elf64-x86-64 -z muldefs -T scripts/kernel.lds
