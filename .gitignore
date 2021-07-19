@@ -1,4 +1,5 @@
 *.o
+*.s
 *.bin
 system
 boot.img

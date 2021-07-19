@@ -1,4 +1,140 @@
-[TOC]
+# 基础知识
+
+## 系统异常处理
+
+当处理器捕获到 异常/中断 时，便会根据 异常/中断 向量号从中断描述符表 IDT 索引出对应的门描述符，再由门描述符定位到处理程序的位置。如果向量号索引到了一个中断门或陷阱门，处理器就会向执行 `CALL` 指令访问调用门一样去执行 异常/中断 处理程序，*当程序来到内核代码的时候已经是在处理程序了*
+
+中断/异常 的处理步骤如下：
+
+1. 处理器会根据 中断/异常 向量号从中断描述符表 IDT 检索出对应的门描述符（中断门或者陷阱门）
+
+2. 读取门描述符保存的段选择子，并从 GDT 或 LDT 中检索出处理程序所在的代码段，再根据门描述符记录的段内偏移确定处理程序的入口地址
+
+3. 处理器在执行 中断/异常 处理程序的时候会检测处理程序所在代码段的特权级 `DPL`，并与当前代码段 `CPL` 进行比较
+
+   - 如果 `CPL > DPL`，则会在执行处理程序之前切换栈空间
+
+     - 处理器首先会强制将 `SS` 段寄存器赋值为 NULL 段选择子
+
+     - 从 `TSS` 中读取 `RSP` 的值赋值给 `RSP` 寄存器
+
+       - 如果 `IST` 位被置位，则从 `TSS` 中索引对应的 `IST` 栈指针
+
+       - 如果 `IST` 位是复位的，则取出与  `DPL` 值相等的 `RSP` 赋值给 `RSP` 寄存器
+
+       - > 关于 `IST`，`IST` 可以使得处理器无条件进行栈切换，`IST = 0` 时使用原有的栈切换机制，否则使用 `IST` 栈切换机制
+
+     - 将 `SS` 和 `RSP` 作为处理程序的栈空间进行切换，在栈空间切换的过程中处理器将自动把切换前的 SS 和 RSP 值压入新的栈空间；处理器还会压入 `EFLAGS、CS、EIP` 寄存器的值到新的栈空间
+
+     - 如果产生错误码，将其保存在新的栈空间内位于 `EIP` 之后（错误码必须由我们自己手动压栈和出栈，前面提到的其他几个寄存器由处理器负责）
+
+   - 如果 `CPL = DPL`
+
+     - 处理器会保存 `EFLAGS、CS、EIP` 到栈中
+     - 如果异常产生错误码，则将其保存在异常栈内位于 `EIP` 寄存器之后
+
+4. 执行 中断/异常 处理程序
+
+5. 借助 `IRET` 指令从处理程序中返回，`IRET` 指令会还原之前由处理器保存的那些寄存器，如果此前发生过栈切换操作则会返回被中断的程序栈
+
+> 关于门描述符，具体分为 *调用门描述符*、*任务门描述符*、*中断门描述符*、*陷阱门描述符*，任务门描述符这里不过多介绍现在都已经不再使用任务门描述符，调用门描述符现代 OS 也不常使用它只能存在于 GDT 或 LDT 中
+
+中断门和陷阱门它们在 `IA-32e` 模式下它们的结构图如下。中断门和陷阱门的不同之处主要体现在 `IF` 标志位（`EFLAGS` 标志寄存器），穿过中断门的时候处理器会复位 `IF` 标志位，而穿过陷阱门的时候不会复位 `IF` 标志位。`IF` 标志位复位可以防止其它中断请求干扰当前中断处理程序
+
+```c
+/*  IA-32e 模式中所有系统段描述符都是 16B，保护模式只有 8B
+// 127~64bit
+Bit:     | 127              96| 95 							64|
+Content: | 		  reserved      |   offset 63:32    |
+// 63~32bit
+Bit:     | 63              48 | 47 | 46 45 | 44 | 43 42 41 40 | 39 38 37 | 36 35 | 34 33 32 |
+Content: | offset 31:16       | P  | DPL   | 0  |     TYPE    |  0  0  0 |  0  0 |    IST   |
+// 31~0bit
+Bit:     | 31              16 | 15              0 |
+Content: | segment selector   | offset 15:00      |
+*/
+// 中断门的 TYPE = 1110，陷阱门 TYPE = 1111，系统调用 INT 0x80 就是使用中断门实现的
+```
+
+## TSS
+
+> *`TSS` 保存不同特权级别下任务所使用的寄存器，特别重要的是 `esp`，因为比如中断后，涉及特权级切换时(一个任务切换)，首先要切换栈，这个栈显然是内核栈，那么如何找到该栈的地址呢，这需要从 `TSS` 段中得到，这样后续的执行才有所依托(在x86机器上，c 语言的函数调用是通过栈实现的)。只要涉及低特权环到高特权环的任务切换，都需要找到高特权环对应的栈，因此需要 `esp2`，`esp1`，`esp0` 起码三个 `esp`，**然而 linux 只使用 `esp0`***
+
+intel 对于 `TSS` 的建议：为每一个进程准备一个独立的 `TSS` 段，进程切换的时候切换 `TR` 寄存器使之指向该进程对应的 `TSS` 段，然后在任务切换时(比如涉及特权级切换的中断)使用该段保留所有的寄存器。
+
+linux 的做法：
+
+1. linux 没有为每一个进程都准备一个 tss 段，而是每一个 cpu 使用一个 tss 段，tr 寄存器保存该段（tr 寄存器也是一个段寄存器）。进程切换时，只更新唯一 tss 段中的 esp0 字段，esp0 保存新进程的内核栈地址。
+2. linux 的 tss 段中只使用 esp0 和 iomap 等字段，不用它来保存寄存器，在一个用户进程被中断进入 ring0 的时候，tss 中取出 esp0，然后切到 esp0，其它的寄存器则保存在 esp0 指示的内核栈上，而不保存在 tss 中。
+3. 结果，linux 中每一个 cpu 只有一个 tss 段，tr 寄存器永远指向它。符合 x86 处理器的使用规范，但不遵循 intel 的建议，这样的后果是开销更小了，因为不必切换tr寄存器了。
+
+`TR` 寄存器是一个段寄存器，它保存了 `16bit` 的段选择子以及当前段的属性，并且和 `cs` 等一样它也包含了两个隐藏的域 `base` 和 `limit`；使用 `LTR` 指令从选择子加载 `TSS` 段，`LTR` 指令从 `GDT` 中取出相应的 `TSS` 段描述符，把 `TSS` 段描述符的基地址和界限等信息装入 `TR`
+
+`TSS` 段描述符的结构如下所示。这里说一下 `B(Busy)` 标志位，`TSS` 段描述符被加载到 `TR` 寄存器之后，其 `B` 标志位会被置位，此时如果重复加载此描述符将产生 `#TS` 异常
+
+```c
+/**
+ * 127~64bit
+ * Bit:     | 127              96| 95 							64|
+ * Content: | 		  reserved     |     base 63:32     |
+ *
+ * 63~0bit
+ * |   7    |     6       |     5     |   4    |   3    |   2    |   1    |   0    |  字节
+ * |76543210|7 6 5 4 3210 |7 65 4 3210|76543210|76543210|76543210|76543210|76543210|  比特
+ * |--------|-|-|-|-|---- |-|--|-|----|--------|--------|--------|--------|--------|  占位
+ * |  BASE  |G|D|0|A|LIMIT|P|D |S|10B1|<------- BASE 23-0 ------>|<-- LIMIT 15-0 ->|  含义
+ * |  31-24 | |/| |V|19-16| |P |
+ *            |B| |L|     | |L |
+ */
+```
+
+`TSS` 内存布局如下所示，其中的 `IST` 相关的由门描述符中的 `IST` 位指定；对比 保护模式 的 `TSS`，`IA-32e` 模式的 `TSS` 只需要负责不同特权级的切换工作
+
+<img src="https://pic4.zhimg.com/80/v2-1afcb53461199f6ba0bde3ae6d9fb213_1440w.jpg" alt="img" style="zoom:50%;" />
+
+[浅谈tss - L (liujunming.top)](http://liujunming.top/2020/01/18/浅谈tss/)
+
+## 特权级
+
+有三种特权级类型：`CPL`, `DPL`, `RPL`，来帮助处理器检测执行权限
+
+- `CPL`：`CPL` 描述了当前程序的执行特权级，它保存在 `CS` 或 `SS` 段寄存器的第 0 位和第 1 位。通常情况下 `CPL` 是正在执行的代码段的特权级，当处理器执行不同特权级的代码段时会修改 `CPL`，执行一致性代码段的时候 `CPL` 保持不变
+- `DPL`：`DPL` 用于表示段描述符或者门描述符的特权级，它保存在段描述符或门描述符的 `DPL` 区域内。当处理器访问这两种描述符的时候会比较描述符中的 `DPL` 与段寄存器中的 `CPL` 以及段选择子中的 `RPL`
+- `RPL`：`RPL` 是段选择子的重载特权级，用于确保程序有足够的权限去访问受保护的程序，它保存在段选择子的第 0 位和第 1 位。当 `RPL > CPL` 时 `RPL` 会覆盖 `CPL`，反之亦然
+
+### 错误码
+
+有些异常会产生错误码，标准错误码格式如下所示
+
+```c
+/**
+ * Bit:     | 31              16| 15 							3|  2 |  1  |  0  |
+ * Content: | 		reserved      | segment selector | TI | IDT | EXT |
+ */
+```
+
+- EXT：该位被置位说明异常是在向程序投递外部事件的过程中触发
+- IDT：该位被置位，说明错误码的段选择子部分记录的是中断描述符 IDT 内的门描述符，复位则说明记录的是 GDT/LDT 内的描述符
+- TI：只有当 IDT 复位才有效，该位置位说明段选择子是 LDT 内的，复位说明是 GDT 内的
+
+页错误异常的错误码比较特殊，其格式如下：
+
+```c
+/**
+ * Bit:     | 31              5| 4 |  3 | 2 | 1 |0|
+ * Content: | 		reserved     |I/D|PSVD|U/S|W/R|P|
+ */
+```
+
+- P 标志位指示异常是否由一个不存在的页触发(P = 0)，或者进入了违规区域(P = 1)，或者使用保留位(P = 1)
+- W/R 标志位指示异常是否由读取页(W/R = 0)或写入页(W/R = 1) 触发
+- U/S 标志位指示异常是否由用户模式(U/S = 1)或超级模式(U/S = 0) 所产生
+- RSVD 标志位指示异常是否由保留位所产生
+- I/D 标志位指示异常是否由获取指令所产生
+
+异常触发时 CR2 寄存器保存着触发异常的线性地址，异常处理程序可以根据此线性地址定位到页目录项和页表项
+
+CS 和 EIP 寄存器指向了触发异常的指令，这两个寄存器会在触发异常的时候由处理器保存到栈上
 
 # bootloader 引导程序
 
@@ -343,6 +479,8 @@ Label_Get_Mem_Struct:
 
 设置好显示模式之后可以观察到 bochs 虚拟机的窗口尺寸会发生变化
 
+[DOS下的SVGA编程_u011423824的专栏-程序员宅基地 - 程序员宅基地 (cxyzjd.com)](http://www.cxyzjd.com/article/u011423824/45360119)；[INT 10, AH=4F - 极客分享 (geek-share.com)](https://www.geek-share.com/detail/2492944880.html)；
+
 ### 实模式 -> 保护模式 -> IA-32e 模式
 
 首先需要从实模式进入保护模式，进入保护模式的契机是 **置位 CR0 寄存器的 PE 标志位**；在进入保护模式之前处理器必须在模式切换前，在内存中创建一段可以在保护模式下执行的代码和必要的系统数据结构
@@ -460,7 +598,7 @@ no_support:
 
 > 这里采用 CPUID 指令首先检测 cpu 所支持的最大扩展功能号，如果支持 0x80000001 的话 再采用该扩展功能执行 CPUID 指令，检测执行结果的 bit 29 如果是 1 就说明处理器支持 IA-32e 模式
 
-完成了处理器模式检测之后，下一步需要为 IA-32e 模式配置 PAE 临时页目录页页表（PAE 模式采用三级页表），临时页表采用硬编码的方式，真正的页表会在内核代码里面重新设置
+完成了处理器模式检测之后，下一步需要为 IA-32e 模式配置临时页目录页页表，临时页表采用硬编码的方式，真正的页表会在内核代码里面重新设置；在这里我们使用的是 `2MB` 的页大小，因此只需要三级页表
 
 ```assembly
 ; ======= init temporary page table 0x90000
@@ -510,21 +648,407 @@ no_support:
   wrmsr
 ```
 
-## 补充
-
-### 页表
-
-> 关于程序中的页表，`IA-32e` 模式的页表可以看作 PAE 页表的扩充，将 `PDPT` 从 4 个表项扩展成 512 个，然后额外添加一个 `level-4` 页表 `PML4`
-
-正常的 64bit 模式下的页表是有 4 级页表的，分别是 `PML4`, `PDPT`, `PDT`, `PT`，但是在我们这里没有 `PT` 页表了，这是因为如果在 `PDT` 页表的页表项中将第 7 bit 置位了那就说明开启了 `2MB` 的页大小；`2M = 2^21, 21 = 9 + 12` 刚好不需要 `PT` 页表索引的 9bit 了，所以也就不需要 `PT` 页表了 ；所以上述页表对于 `loader` 程序的地址 `0x1????` 是完全可以正常访问的，因为`PML4`, `PDPT`, `PDT` 中的偏移全是 0，也就是全部对应第一个表项，最后 `0x1????` 地址对应的物理地址在 `PDT` 第一个 `entry` 表示的物理页内
-
-另外 对于上述 `PDT` 表的表项，相邻的两个表项地址相差 `0x200000`，因为 `page size = 2MB = 2^21`，所以相差 `0x200000` 也就相差了一个 page
-
-## 参考
-
-[指令集文档](https://faydoc.tripod.com/cpu/setnb.htm)；
-
-SVGA：[DOS下的SVGA编程_u011423824的专栏-程序员宅基地 - 程序员宅基地 (cxyzjd.com)](http://www.cxyzjd.com/article/u011423824/45360119)；[INT 10, AH=4F - 极客分享 (geek-share.com)](https://www.geek-share.com/detail/2492944880.html)；
-
 PAE：[linux内存管理之PAE（物理地址扩展）解决内存大于4G的问题_jinking01的专栏-CSDN博客](https://blog.csdn.net/jinking01/article/details/105834801)
+
+# 内核
+
+## head.S
+
+内核执行头程序负责为操作系统创建段结构和页表结构、设置某些默认处理函数、配置关键寄存器结构等工作，在完成上述工作之后通过远跳转指令进入内核主程序。
+
+loader 程序将整个内核装载到物理内存地址 `0x100000` 处，`head.S` 位于该地址开始的起始位置，第一条指令的虚拟地址是 `0xffff 8000 0010 0000` 位于标签 `_entry` 由链接脚本指定。这里采用的页表是在 loader 程序里面设置好的页表，`0xffff 8000 0010 0000` 对应的 PML4 索引是 `0x0`，PDPT 索引是 `0x0`，PDT 索引是 `0x0`，页内偏移是 `1M`，所以最终映射到的物理地址是 `0x100000`
+
+### GDT 初始化
+
+head.S 的一个重要的工作就是重新设置 `GDT`、`IDT` 以及 `TSS`，它们都被都保存在 `.data` section，在这里只有 `GDT` 一开始就在内存写好了。关于 `GDT`，段描述符和段选择子的结构如下所示
+
+<img src="https://pic4.zhimg.com/80/v2-9df1db9256e405b3eb252471760fe53f_1440w.jpg" alt="img" style="zoom:50%;" />
+
+在 `IA-32e` 模式下段描述符会忽略段基址和段长度，但是逻辑地址到线性地址的转换过程依然采用段基地址加段内偏移的方法，不过由于这两个值是被忽略的 被设置为 0，实际上一个段覆盖了整个线性地址空间（也称为平坦地址空间）
+
+```c
+// 段选择子（段寄存器）
+Bit:     | 15                                3 | 2  | 1 0 |
+Content: | offset (index)                      | ti | rpl |
+// offset 表示在 GDT 中的索引
+```
+
+```assembly
+/**
+ * 定义 .data 段，
+ * 存放 GDT, IDT, TSS, 页表 等数据
+ */
+.section .data
+
+/* GDT_Table */
+/**
+ * .global 表示在符号表中标记该符号是一个全局符号
+ * 链接器只能处理全局符号
+ * 另外 GDT_Table 在这里只表示一个内存地址而已，在 C 中使用则会表示一个变量
+ */
+.global GDT_Table
+GDT_Table:
+  /* .quad 表示对于每个数，从当前位置开始分配 8-byte 存放 */
+  .quad   0x0000000000000000    /* 0 NULL 描述符 */
+  .quad	  0x0020980000000000    /* 1 KERNEL Code 64-bit, Segment 0x08 */
+  .quad	  0x0000920000000000		/* 2	KERNEL Data	64-bit, Segment 0x10 */
+	.quad	  0x0020f80000000000		/* 3	USER Code 64-bit, Segment 0x18 */
+	.quad	  0x0000f20000000000		/* 4	USER Data	64-bit, Segment 0x20 */
+	.quad	  0x00cf9a000000ffff		/* 5	KERNEL Code 32-bit, Segment 0x28 */
+	.quad	  0x00cf92000000ffff		/* 6	KERNEL Data 32-bit, Segment	0x30 */
+  .fill   10,8,0                /* fill repeat, size, value */
+GDT_END:
+
+GDT_POINTER:  /* 赋值给 GDTR 寄存器 */
+GDT_LIMIT:    .word   GDT_END - GDT_Table - 1
+GDT_BASE:     .quad   GDT_Table
+```
+
+在 `_start` 的开始我们先设置好 `GDTR` 和 `IDTR` 寄存器，由于 `GDTR` 被更新了所以需要重新加载段寄存器；`CS` 寄存器不能直接赋值更新，只能通过远跳转进行更新，这里有一个问题 `GAS` 编译器暂不支持直接远跳转 `JMP/CALL` 指令，所以我们采用 `LRET` 指令来模拟 `LJMP`，这将在完成页表更新后执行
+
+```assembly
+/* 加载 GDTR */
+lgdt  GDT_POINTER(%rip)
+
+/* 加载 IDTR */
+lidt  IDT_POINTER(%rip)
+mov   $0x10,  %ax
+mov   %ax,    %ds
+mov   %ax,    %es
+mov   %ax,    %fs
+mov   %ax,    %gs
+mov   %ax,    %ss
+mov   $0x7E00,  %rsp
+```
+
+### 页表初始化
+
+这里首先简单描述一下 `IA-32e` 模式的页表的一些内容，实际上还有其他结构的页表比如 `PSE`, `PAE`, `IA-32` 页表等
+
+> 值得一题的是 IA-32e 模式的页大小支持 4KB(2^12), 2MB(2^21), 3GB(2^30)，每增大一级页大小，少一级页表（一级页表的索引占 9bit）；关于程序中的页表，`IA-32e` 模式的页表可以看作 PAE 页表的扩充，将 `PDPT` 从 4 个表项扩展成 512 个，然后额外添加一个 `level-4` 页表 `PML4`
+>
+> 正常的 64bit 模式下的页表是有 4 级页表的，分别是 `PML4`, `PDPT`, `PDT`, `PT`，但是在我们这里没有 `PT` 页表了，这是因为如果在 `PDT` 页表的页表项中将第 7 bit 置位了那就说明开启了 `2MB` 的页大小；`2M = 2^21, 21 = 9 + 12` 刚好不需要 `PT` 页表索引的 9bit 了，所以也就不需要 `PT` 页表了 
+
+OK，紧接着 `head.S` 需要做的是重新设置 cr3 寄存器，因此我们首先需要在内存中人工设置好页表。页表内容如下，相关解释都已经在注释中说明
+
+```assembly
+/** 
+ * 定义 64-bit 页表，每个页表项大小为 8B
+ * 对于单个地址来说只有低 48-bit 才能进行页表地址转换
+ */
+.align  8
+.org    0x1000        /* 对应的虚拟地址是 (链接脚本指定的地址 + 0x1000) */
+__PML4E:
+  .quad   0x102007    /* 线性地址 0 对应的 PML4E */
+  .fill   255, 8, 0   /* 填充 0x00-PML4E ~ 0xffff8...-PML4E 中间的 PML4E */
+  .quad   0x102007    /* 线性地址 0xffff 8000 0000 0000 对应的 PML4E */
+  .fill   255, 8, 0   /* 填充剩余的 PML4E */
+
+.org    0x2000
+__PDPTE:
+  .quad   0x103003    /* 不管是高地址还是低地址，对应的 PDPTE 索引都是 0 */
+  .fill   511, 8, 0   /* 填充剩余的 PDPTE */
+
+/* PDE 的最后 8-bit 中的第 7-bit 都是 1，表示开启了 2MB 的 page size */
+.org    0x3000
+__PDE:
+  /* 0x...0000 在 PDT 中的索引为 0x00 */
+  .quad   0x000083    /* 映射前 10MB 的物理地址到 0x00 和 0xffff 8000 0000 0000 */
+  .quad   0x200083
+  .quad   0x400083
+  .quad   0x600083
+  .quad   0x800083
+  /* 0x...a00000 在 PDT 中的索引为 0x05 */
+  .quad   0xe0000083  /* 映射 0xe0000000 开始的 16MB 物理地址到 0xa00000 和 0xffff 8000 00a0 0000 */
+                      /* 0xe0000083 物理内存对应的是帧缓存，用来在屏幕上显示颜色，帧缓存的每个存储单元对应一个像素 */
+                      /* 这里的帧缓存由于之前在 loader 程序中设置过，每个像素点的颜色深度为 32-bit */
+  .quad   0xe0200083
+  .quad   0xe0400083
+  .quad   0xe0600083
+  .quad   0xe0800083
+  .quad   0xe0a00083
+  .quad   0xe0c00083
+  .quad   0xe0e00083
+  .fill   499, 8, 0   /* 填充剩余的表项 */
+```
+
+设置好页表之后只需要把页表的物理地址更新到 `CR3` 寄存器即可
+
+```assembly
+/* 设置 CR3 */
+/**
+* __PML4E 在本程序内的虚拟地址是 0xffff 8000 0010 0000 + 0x1000，
+* 最终映射到的物理地址是 0x101000，所以把 0x101000 赋值给 CR3
+*/
+movq  $0x101000,  %rax
+movq  %rax,   %cr3
+```
+
+最后通过模拟的远跳转更新代码段寄存器
+
+```assembly
+/**
+ * 使用远跳转更新 cs 段寄存器
+ * 由于 GAS 编译器暂不支持直接远跳转 JMP/CALL 指令，所以这里采用 lretq 来模拟 ljmp
+ */
+movq  switch_seg(%rip), %rax  /* rax 保存 switch_seg 地址的内容 */
+pushq $0x08                   /* 保存段选择子 */
+pushq %rax                    /* 保存函数调用时的返回地址 */
+lretq                         /* 远跳转 弹出段选择子和地址 进行跳转，即 ljmp 0x08:rax */
+
+/* 64-bit 模式代码 */
+switch_seg:
+  .quad   entry64
+entry64:
+  movq  $0x10,  %rax
+  movq  %rax,   %ds
+  movq  %rax,   %es
+  movq  %rax,   %gs
+  movq  %rax,   %ss
+  movq  $0xffff800000007e00,  %rsp  /* 栈指针 */
+```
+
+### IDT 初始化
+
+前面我们只是加载了 `IDT` 表的信息到 `IDTR` 寄存器，但是 `IDT` 现在还是空的。为了能够捕获异常在这里先设置一个默认的处理函数，该函数只负责打印 message 信息
+
+具体的初始化步骤在注释中已经解释清楚了，这里提一下中断描述符，其结构如下所示。因此我们在初始化中断描述符的时候，其工作就是按照下面展示的结构进行对应的 bit 设置
+
+```c
+// 127~64bit
+Bit:     | 127              96| 95 							64|
+Content: | 		  reserved      |   offset 63:32    |
+// 63~32bit
+Bit:     | 31              16 | 15 | 14 13 | 12 | 11 10 9 8 | 7 6 5 | 4 3 | 2 1 0 |
+Content: | offset 31:16       | P  | DPL   | 0  |    TYPE   | 0 0 0 | 0 0 |  IST  |
+// 31~0bit
+Bit:     | 31              16 | 15              0 |
+Content: | segment selector   | offset 15:00      |
+```
+
+```assembly
+/**
+ * 初始化 IDT
+ * 1. 设置 ignore_int 的中断描述符
+ * 2. 将整个 IDT 的 256 个中断描述符都设置为上述描述符
+ */
+setup_IDT:	/* 初始化 ignore_int 中断描述符 */
+  leaq  ignore_int(%rip), %rdx      /* 保存 ignore_int 到 rdx */
+  movq  $(0x08 << 16),    %rax
+  movw  %dx,  %ax                   /* 现在 rax 31~16bit 保存的是段选择子， 15~0bit 保存的是 ignore_int 地址的低 16bit */
+  movq  $(0x8E00 << 32),  %rcx
+  addq  %rcx, %rax                  /* 现在 rax 47~32bit 保存的是 0x8E00 标志位 */
+  movl  %edx, %ecx                  /* ecx 保存 ignore_int 地址的低 32bit */
+  shrl  $16,  %ecx                  /* ecx 保存 ignore_int 地址的 31~16bit */
+  shlq  $48,  %rcx                  /* ecx 的 63~48bit 保存 ignore_int 地址的 32~16bit */
+  addq  %rcx, %rax                  /* 现在 rax 63~48bit 保存 ignore 地址的 32~16bit */
+  shrq  $32,  %rdx                  /* rdx 保存 ignore_int 地址的高 32bit */
+  leaq  IDT_Table(%rip),  %rdi      /* IDT_TABLE 地址保存到 rdi */
+  mov   $256, %rcx                  /* 下面的循环次数，256 也就是 IDT entry 的个数 */
+rp_sidt:		/* 设置 256 个中断描述符，每个中断描述符 16B */
+  movq  %rax,   (%rdi)              /* 第 i 此循环，设置第 i 个表项的低 8byte */
+  movq  %rdx,   8(%rdi)             /* 设置第 i 个表项的高 8byte */
+  addq  $0x10,  %rdi                /* rdi 指向下一个 entry */
+  dec   %rcx                        /* 循环次数减一 */
+  jne   rp_sidt                     /* 如果 rcx != 0 继续循环 */
+```
+
+### TSS 初始化
+
+主要内容如下：
+
+1. *人工设置好 TSS 段描述符，然后写入 GDT，TSS 段描述符占 16B*
+2. *使用 ltr 指令从 GDT 加载该描述符到 TR 寄存器*
+
+```assembly
+set_TSS64:
+  leaq  TSS64_Table(%rip),  %rdx    /* 保存 TSS64_Table 地址到 rdx */
+  xorq  %rax,   %rax                /* 清空 rax */
+  xorq  %rcx,   %rcx                /* 清空 rcx */
+  movq  $0x89,  %rax                /* rax = 0x89 */
+  shlq  $40,    %rax                /* rax = 0x0000 8900 0000 0000 */
+  movl  %edx,   %ecx                /* ecx 保存 TSS64_Table 地址的低 32bit */
+  shrl  $24,    %ecx                /* ecx 7~0bit 保存 TSS64_Table 的 31~24bit */
+  shlq  $56,    %rcx                /* rcx 63~56bit 保存 TSS64_Table 的 31~24bit */
+  addq  %rcx,   %rax                /* rax = 0x??00 8900 0000 0000，? 代表的是 TSS64_Table 的 31~24bit */
+  xorq  %rcx,   %rcx                /* 清空 rcx */
+  movl  %edx,   %ecx                /* ecx 保存 TSS64_Table 地址的低 32bit */
+  andl  $0xffffff,  %ecx            /* ecx 保存 TSS64_Table 地址的 23~0bit */
+  shlq  $16,    %rcx                /* rcx 39~16bit 保存 TSS64_Table 地址的 23~0bit */
+  addq  %rcx,   %rax                /* rax = 0x??00 89?? ???? 0000，? 的意思和上述一样 */
+  addq  $103,   %rax                /* 103 = 0x67，rax = 0x??00 89?? ???? 0067 */
+  leaq  GDT_Table(%rip),  %rdi      /* rdi 保存 GDT_Table 的首地址 */
+  movq  %rax,   64(%rdi)            /* GDT_Table 的第 8 个 entry 保存 rax 的值，实际上 rax 的值就是 TSS 段描述符 */
+  shrq  $32,    %rdx                /* rdx 保留 TSS_Table 的高 32bit */
+  movq  %rdx,   72(%rdi)            /* 第 9 个 entry 保存 TSS_Table 地址的高 32bit */
+
+  mov   $0x40,  %ax                 /* ax 变成 TSS 段选择子，ax = 0000 0000 0100 0000，第 4bit 开始是索引号，刚好等于 8 */
+  ltr   %ax                         /* 加载 TSS 描述符到 TR 寄存器 */
+```
+
+### 跳转到内核主程序
+
+所有操作完成之后，最后利用 `LRET` 指令跳转到内核主程序
+
+```assembly
+	movq  go_to_kernel(%rip),   %rax
+  pushq $0x08
+  pushq %rax
+  lretq
+go_to_kernel:
+  .quad Start_Kernel
+```
+
+## 屏幕显示
+
+本内核提供了 `color_printk()` 函数用来格式化字符显示，该函数的主要逻辑如下：
+
+1. 调用 vsprintf 解析格式化字符串，将最终需要显示的内容保存到 buf
+2. 调用 putchar 通过设置像素点颜色在显示器上显示字符
+
+关于 `vsprintf()`，它是用来解析格式化字符串的，通过遍历需要格式化的字符串 `fmt` 对每个字符进行判断来实现
+
+`putchar()` 用来在屏幕像素上显示一个字符，一个字符的像素大小是 16 行 8 列：
+
+1. 通过 font 获取预先设置好的 ASCII 矩阵信息，ASCII 矩阵描述了每个字符的矩阵信息
+2. 检查该矩阵的每一个 bit，如果是 1 表示该像素显示，否则不显示
+3. 针对像素是否显示，在帧缓存区设置像素的颜色信息
+
+具体的实现方式见代码注释
+
+## 异常初始化
+
+### TSS 初始化
+
+基础知识里面提到了再发生 异常/中断 的时候会根据门描述符特权级或 `IST` 标志位，在 `TSS` 中取出 `RSP` 设置栈指针，因此我们需要完成 `TSS` 的初始化，包括两部分
+
+- `TR` 寄存器初始化
+- `TSS` 段内容初始化
+
+```assembly
+/* head.S */
+set_TSS64:
+  /**
+   * 这里主要是两个任务
+   * 1. 人工设置好 TSS 段描述符，然后写入 GDT，TSS 段描述符占 16B
+   * 2. 使用 ltr 指令从 GDT 加载该描述符到 TR 寄存器
+   */
+  leaq  TSS64_Table(%rip),  %rdx    /* 保存 TSS64_Table 地址到 rdx */
+  xorq  %rax,   %rax                /* 清空 rax */
+  xorq  %rcx,   %rcx                /* 清空 rcx */
+  movq  $0x89,  %rax                /* rax = 0x89 */
+  shlq  $40,    %rax                /* rax = 0x0000 8900 0000 0000 */
+  movl  %edx,   %ecx                /* ecx 保存 TSS64_Table 地址的低 32bit */
+  shrl  $24,    %ecx                /* ecx 7~0bit 保存 TSS64_Table 的 31~24bit */
+  shlq  $56,    %rcx                /* rcx 63~56bit 保存 TSS64_Table 的 31~24bit */
+  addq  %rcx,   %rax                /* rax = 0x??00 8900 0000 0000，? 代表的是 TSS64_Table 的 31~24bit */
+  xorq  %rcx,   %rcx                /* 清空 rcx */
+  movl  %edx,   %ecx                /* ecx 保存 TSS64_Table 地址的低 32bit */
+  andl  $0xffffff,  %ecx            /* ecx 保存 TSS64_Table 地址的 23~0bit */
+  shlq  $16,    %rcx                /* rcx 39~16bit 保存 TSS64_Table 地址的 23~0bit */
+  addq  %rcx,   %rax                /* rax = 0x??00 89?? ???? 0000，? 的意思和上述一样 */
+  addq  $103,   %rax                /* 103 = 0x67，rax = 0x??00 89?? ???? 0067 */
+  leaq  GDT_Table(%rip),  %rdi      /* rdi 保存 GDT_Table 的首地址 */
+  movq  %rax,   64(%rdi)            /* GDT_Table 的第 8 个 entry 保存 rax 的值，实际上 rax 的值就是 TSS 段描述符 */
+  shrq  $32,    %rdx                /* rdx 保留 TSS_Table 的高 32bit */
+  movq  %rdx,   72(%rdi)            /* 第 9 个 entry 保存 TSS_Table 地址的高 32bit */
+
+  mov   $0x40,  %ax                 /* ax 变成 TSS 段选择子，ax = 0000 0000 0100 0000，第 4bit 开始是索引号，刚好等于 8 */
+  ltr   %ax                         /* 加载 TSS 描述符到 TR 寄存器 */
+```
+
+```c
+// file gate.h
+/* 配置 TSS 段内的 RSP 和 IST 项 */
+void set_tss64(unsigned long rsp0, unsigned long rsp1, unsigned long rsp2,
+               unsigned long ist1, unsigned long ist2, unsigned long ist3,
+               unsigned long ist4, unsigned long ist5, unsigned long ist6,
+               unsigned long ist7) {
+  *(unsigned long *)(TSS64_Table + 1) = rsp0;
+  *(unsigned long *)(TSS64_Table + 3) = rsp1;
+  *(unsigned long *)(TSS64_Table + 5) = rsp2;
+
+  *(unsigned long *)(TSS64_Table + 9) = ist1;
+  *(unsigned long *)(TSS64_Table + 11) = ist2;
+  *(unsigned long *)(TSS64_Table + 13) = ist3;
+  *(unsigned long *)(TSS64_Table + 15) = ist4;
+  *(unsigned long *)(TSS64_Table + 17) = ist5;
+  *(unsigned long *)(TSS64_Table + 19) = ist6;
+  *(unsigned long *)(TSS64_Table + 21) = ist7;
+}
+// file main.c
+set_tss64(0xffff800000007c00, 0xffff800000007c00, 0xffff800000007c00,
+            0xffff800000007c00, 0xffff800000007c00, 0xffff800000007c00,
+            0xffff800000007c00, 0xffff800000007c00, 0xffff800000007c00,
+            0xffff800000007c00);
+```
+
+### 门描述符初始化
+
+采用内嵌汇编的方式，在 IDT 中设置对应向量号的门描述符，例如需要设置 page fault 的中断处理函数（page fault 的向量号是 14），那么需要在 IDT 的第 14 个 entry 设置好相关的 bit 即可
+
+```assembly
+/**
+ * @gate_selector_addr: IDT 中的某一个 entry
+ * @attr: 0x8E 或 0x8F
+ * @ist: 见 set_xxx_gate 函数说明
+ * @code_addr: 处理函数地址
+ * 
+ * 这里的匹配约束例如 "3", "2" 表示该变量的约束和 %3, %2 变量的约束一样
+ */
+#define _set_gate(gate_selector_addr, attr, ist, code_addr)                    \
+  do {                                                                         \
+    unsigned long __d0, __d1;                                                  \
+    __asm__ __volatile__("movw   %%dx,   %%ax    \n\t"                         \
+                         "andq   $0x7,   %%rcx   \n\t"                         \
+                         "addq   %4,     %%rcx   \n\t"                         \
+                         "shlq   $32,    %%rcx   \n\t"                         \
+                         "addq   %%rcx,  %%rax   \n\t"                         \
+                         "xorq   %%rcx,  %%rcx   \n\t"                         \
+                         "movl   %%edx,  %%ecx   \n\t"                         \
+                         "shrq   $16,    %%rcx   \n\t"                         \
+                         "shlq   $48,    %%rcx   \n\t"                         \
+                         "addq   %%rcx,  %%rax   \n\t"                         \
+                         "movq   %%rax,  %0      \n\t"                         \
+                         "shrq   $32,    %%rdx   \n\t"                         \
+                         "movq   %%rdx,  %1      \n\t"                         \
+                         : "=m"(*((unsigned long *)(gate_selector_addr))),     \
+                           "=m"(*(1 + (unsigned long *)(gate_selector_addr))), \
+                           "=&a"(__d0), "=&d"(__d1)                            \
+                         : "i"(attr << 8), "3"((unsigned long *)(code_addr)),  \
+                           "2"(0x8 << 16), "c"(ist)                            \
+                         : "memory");                                          \
+  } while (0)
+```
+
+### 异常处理函数
+
+当处理器来到异常处理函数的时候，栈已经切换到异常栈了并且 `EFLAGS, CS, EIP` 都已经保存完毕
+
+限于篇幅，异常处理函数的逻辑功能如下
+
+1. 压入错误码和逻辑处理函数的地址（对于会产生错误码的异常，处理器会压入错误码；不会产生错误码的异常，人工压入 0）
+2. 保存剩余的寄存器
+3. 从栈上取出错误码和栈顶指针以及逻辑处理函数地址，跳转到逻辑处理函数
+
+这里展示 `divide_error` 处理函数的逻辑
+
+```c
+/* 0 #DE. 除法错误 */
+void do_divide_error(unsigned long rsp, unsigned long error_code) {
+  unsigned long *p = NULL;
+  p = (unsigned long *)(rsp + 0x98); /* 0x98 是 RIP 相对于 RSP 的栈上偏移 */
+  /* 显示错误码值、栈指针值、异常产生的程序地址等日志信息 */
+  color_printk(RED, BLACK, "do_divide_error(0), ERROR_CODE: %#018lx, RSP: %#018lx, RIP: %#018lx\n", error_code, rsp, *p);
+  while(1);
+}
+```
+
+
+
+# 参考
+
+[指令集文档](https://faydoc.tripod.com/cpu/setnb.htm)；[汇编语言--x86汇编指令集大全 - 知乎 (zhihu.com)](https://zhuanlan.zhihu.com/p/53394807)
+
+[ARM架构下常用GNU汇编程序伪指令介绍（Assembler Directive）_Roland_Sun的专栏-CSDN博客_gnu伪指令](https://blog.csdn.net/Roland_Sun/article/details/107705952)
 
