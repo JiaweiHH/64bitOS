@@ -3,8 +3,6 @@
 #include "lib.h"
 #include "linkage.h"
 
-extern inline int strlen(char *String);
-
 /**
  * 将整数值按照指定进制规格转换成字符串
  * @str: 待显示字符串缓冲区

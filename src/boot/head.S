@@ -4,9 +4,11 @@
  * 2. 创建新的页目录，设置相关寄存器
  * 3. 跳转到内核主程序执行
  *
+ * 1111 1111 1111 1111 1     000 0000 00     00 0000 000     0 0000 000     10000 0000 0000 0000 0000
  * head.S 第一条指令地址在链接脚本中指定，地址是 0xffff 8000 0010 0000
  * 这个时候 cr3 是在 loader.asm 中设置的，采用的是前面设置的页表
- * 0xffff 8000 0010 0000 对应的 PML4 索引是 0x100，最终 0xffff8... 被映射到物理地址 0x10 0000
+ * 0xffff 8000 0010 0000 对应的 PML4 索引是 0x0，PDPT 索引是 0x0，PDT 索引是 0x0，页内偏移是 1MB
+ * 最终 0xffff8... 被映射到物理地址 0x10 0000
  */
 
 .section .text
@@ -81,7 +83,7 @@ setup_IDT:	/* 初始化 ignore_int 中断描述符 */
   shrq  $32,  %rdx                  /* rdx 保存 ignore_int 地址的高 32bit */
   leaq  IDT_Table(%rip),  %rdi      /* IDT_TABLE 地址保存到 rdi */
   mov   $256, %rcx                  /* 下面的循环次数，256 也就是 IDT entry 的个数 */
-rp_sidt:		/* 设置 256 个中断描述符 */
+rp_sidt:		/* 设置 256 个中断描述符，每个中断描述符 16B */
   movq  %rax,   (%rdi)              /* 第 i 此循环，设置第 i 个表项的低 8byte */
   movq  %rdx,   8(%rdi)             /* 设置第 i 个表项的高 8byte */
   addq  $0x10,  %rdi                /* rdi 指向下一个 entry */
@@ -91,7 +93,7 @@ rp_sidt:		/* 设置 256 个中断描述符 */
 set_TSS64:
   /**
    * 这里主要是两个任务
-   * 1. 人工设置好 TSS 段描述符，然后写入 GDT
+   * 1. 人工设置好 TSS 段描述符，然后写入 GDT，TSS 段描述符占 16B
    * 2. 使用 ltr 指令从 GDT 加载该描述符到 TR 寄存器
    */
   leaq  TSS64_Table(%rip),  %rdx    /* 保存 TSS64_Table 地址到 rdx */
