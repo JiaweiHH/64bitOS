@@ -2,13 +2,15 @@ C_SOURCES = $(shell find . -name "*.c")
 C_OBJECTS = $(patsubst %.c, %.o, $(C_SOURCES))
 S_SOURCES = $(shell find . -name "*.S")
 S_OBJECTS = $(patsubst %.S, %.o, $(S_SOURCES))
+S_TMPFILE = $(patsubst %.S, %.s, $(S_SOURCES))
 BOOT_SOURCES	= $(shell find . -name "*.asm")
 BOOT_OBJECTS = $(patsubst %.asm, %.bin, $(BOOT_SOURCES))
 
 
 ASM = nasm
-CFLAGES := -mcmodel=large -fno-builtin -m64 -fno-stack-protector -c -I include
-
+CFLAGS := -mcmodel=large -fno-builtin -m64 -fno-stack-protector -c -I include
+ASFLAGS := --64
+CPPFLAGS := -I include
 # 会出现重复定义的行为，使用链接器的 -z muldefs 参数表示当出现重复定义的时候只使用其中的一个
 LDFLAGS := -b elf64-x86-64 -z muldefs -T scripts/kernel.lds
 
@@ -20,13 +22,14 @@ all: system
 	$(ASM) $< -o $@
 
 %.o: %.S
-	as --64 -o $@ $<
+	$(CPP) $(CPPFLAGS) $< > $(patsubst %.S, %.s, $<)
+	as $(ASFLAGS) -o $@ $(patsubst %.S, %.s, $<)
 
 %.o: %.c
-	gcc $(CFLAGES) -o $@ $<
+	gcc $(CFLAGS) -o $@ $<
 
 system: $(S_OBJECTS) $(C_OBJECTS)
-	ld $(LDFLAGS) -o $@ $^
+	ld $(LDFLAGS) -o $@ boot/head.o $(C_OBJECTS) $(filter-out %head.o, $(S_OBJECTS))
 
 bochs: update_image
 	bochs -f tools/bochsrc
@@ -53,4 +56,4 @@ umount_image:
 	sudo umount ./mnt
 
 clean:
-	rm -rf $(BOOT_OBJECTS) $(S_OBJECTS) $(C_OBJECTS) system kernel.bin
+	rm -rf $(BOOT_OBJECTS) $(S_OBJECTS) $(C_OBJECTS) $(S_TMPFILE) system kernel.bin

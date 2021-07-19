@@ -1,5 +1,6 @@
-// #include "lib.h"
+#include "lib.h"
 #include "printk.h"
+#include "gate.h"
 
 void Start_Kernel(void) {
   int *addr = (int *)0xffff800000a00000;
@@ -44,9 +45,12 @@ void Start_Kernel(void) {
 
   color_printk(YELLOW, BLACK, "Hello World!\n");
 
-  i = 1 / 0;
-  if(i > 0)
-    color_printk(YELLOW, BLACK, "Hello World!\n");
+  // load_TR(8);
+  set_tss64(0xffff800000007c00, 0xffff800000007c00, 0xffff800000007c00,
+            0xffff800000007c00, 0xffff800000007c00, 0xffff800000007c00,
+            0xffff800000007c00, 0xffff800000007c00, 0xffff800000007c00,
+            0xffff800000007c00);
+  sys_vector_init();
   while(1)
     ;
 }
