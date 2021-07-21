@@ -1,6 +1,20 @@
 #include "lib.h"
 #include "printk.h"
 #include "gate.h"
+#include "trap.h"
+#include "mem.h"
+
+/**
+ * @brief 内核程序代码段和数据段的相关信息
+ * 经过声明后的这些标识符会被链接脚本指定的地址，例如
+ * _text 会被放在 0xffff 8000 0010 0000 地址处
+ */
+extern char _text;
+extern char _etext;
+extern char _edata;
+extern char _end;
+
+struct Global_Memory_Descriptor memory_management_struct = {{0}, 0};
 
 void Start_Kernel(void) {
   int *addr = (int *)0xffff800000a00000;
@@ -14,35 +28,6 @@ void Start_Kernel(void) {
   Pos.FB_addr = addr;
   Pos.FB_length = Pos.XResolution * Pos.YResolution * 4;
 
-  for(i = 0; i < 1440 * 20; ++i) {
-    *((char *)addr + 0) = (char)0x00;
-    *((char *)addr + 1) = (char)0x00;
-    *((char *)addr + 2) = (char)0xff;
-    *((char *)addr + 3) = (char)0x00;
-    ++addr;
-  }
-  for(i = 0; i < 1440 * 20; ++i) {
-    *((char *)addr + 0) = (char)0x00;
-    *((char *)addr + 1) = (char)0xff;
-    *((char *)addr + 2) = (char)0x00;
-    *((char *)addr + 3) = (char)0x00;
-    ++addr;
-  }
-  for(i = 0; i < 1440 * 20; ++i) {
-    *((char *)addr + 0) = (char)0xff;
-    *((char *)addr + 1) = (char)0x00;
-    *((char *)addr + 2) = (char)0x00;
-    *((char *)addr + 3) = (char)0x00;
-    ++addr;
-  }
-  for(i = 0; i < 1440 * 20; ++i) {
-    *((char *)addr + 0) = (char)0xff;
-    *((char *)addr + 1) = (char)0xff;
-    *((char *)addr + 2) = (char)0xff;
-    *((char *)addr + 3) = (char)0x00;
-    ++addr;
-  }
-
   color_printk(YELLOW, BLACK, "Hello World!\n");
 
   // load_TR(8);
@@ -51,6 +36,15 @@ void Start_Kernel(void) {
             0xffff800000007c00, 0xffff800000007c00, 0xffff800000007c00,
             0xffff800000007c00);
   sys_vector_init();
+
+  /* 初始化内核程序地址相关信息 */
+  memory_management_struct.start_code = (unsigned long)&_text;
+  memory_management_struct.end_code = (unsigned long)&_etext;
+  memory_management_struct.end_data = (unsigned long)&_edata;
+  memory_management_struct.end_brk = (unsigned long)&_end;
+  
+  color_printk(RED, BLACK, "memory_init\n");
+  init_memory();
   while(1)
     ;
 }
