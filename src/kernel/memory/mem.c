@@ -289,3 +289,85 @@ void init_memory() {
   }
   flush_tlb();
 }
+
+/**
+ * @brief 分页物理页，一次最多分配 64 页
+ * 
+ * @param zone_select 从 DMA, NORMAL 等区域选择 ZONE
+ * @param number number <= 64
+ * @param page_flags struct page 属性
+ * @return struct page* 
+ */
+struct page *alloc_pages(int zone_select, int number, unsigned long page_flags) {
+  unsigned long page = 0;
+  int zone_start = 0, zone_end = 0;
+  /* 选择 ZONE 区域 */
+  switch (zone_select) {
+  case ZONE_DMA:
+    zone_start = 0;
+    zone_end = ZONE_DMA_INDEX;
+    break;
+  case ZONE_NORMAL:
+    zone_start = ZONE_DMA_INDEX;
+    zone_end = ZONE_NORMAL_INDEX;
+    break;
+  case ZONE_UNMAPED:
+    zone_start = ZONE_UNMAPED_INDEX;
+    zone_end = memory_management_struct.zones_size - 1;
+    break;
+  default:
+    color_printk(RED, BLACK, "alloc_pages error zone_select index\n");
+    return NULL;
+    break;
+  }
+  for(int i = zone_start; i <= zone_end; ++i) {
+    struct zone *z;
+    unsigned long start, end, length;
+    unsigned long tmp;
+    /* 区域中没有足够的页面 */
+    if((memory_management_struct.zones_struct + i)->page_free_count < number)
+      continue;
+    z = memory_management_struct.zones_struct + i;
+    start = z->zone_start_address >> PAGE_2M_SHIFT;
+    end = z->zone_end_address >> PAGE_2M_SHIFT;
+    length = z->zone_length >> PAGE_2M_SHIFT;
+
+    /**
+     * 为了按照 unsigned long 对齐，起始页开始的位图只能检索 tmp = 64 - start % 64 次
+     * 通过 j += j % 64 ? tmp : 64，可以将后续的步进过程按照 unsigned long 对齐
+     */
+    tmp = 64 - start % 64;
+    for(unsigned long j = start; j <= end; j += j % 64 ? tmp : 64) {
+      /* 确定一开始在 bitmap 的第几个 unsigned long */
+      unsigned long *p = memory_management_struct.bits_map + (j >> 6);
+      /* 确定此次 unsigned long 步长的起始偏移 */
+      unsigned long shift = j % 64;
+
+      /**
+       * k < 64 - shift 确定这次搜索的区间长度，除了第一次其余都是 64
+       * tmp = (*p >> k) | (*(p + 1) << (64 - k)) 表示将下一个 64bit 与当前 64bit 去掉前面 0~k-1 bit 之后的结果进行拼接
+       * tmp & (number == 64 ? 0xffffffffffffffffUL : ((1UL << number) - 1)) 表示需要 number 个连续的 page 就保留 tmp 拼接结果的 number bit
+       * 最后 ! 判断上述结果位图中是不是全是 0，只有全是 0 才是可以分配的连续页
+       * 
+       * 补充：
+       * 1. 关于 &() 括号中的部分为什么不直接使用 (1UL << number) - 1，是由于对于 64bit 寄存器来说 SHL 指令的左移范围是 0~63
+       * 2. 关于为什么需要拼接，是因为可能某一个 unsigned long 已经被占用了几个 bit 了，这样的话就需要下一个 unsigned long 来扩充
+       */
+      for(unsigned long k = shift; k < 64 - shift; ++k) {
+        if(!(((*p >> k) | (*(p + 1) << (64 - k))) & (number == 64 ? 0xffffffffffffffffUL : ((1UL << number) - 1)))) {
+          page = j + k - 1;   /* 获取连续页的起始页号 */
+          for(unsigned long l = 0; l < number; ++l) {   /* 占用这些物理页面 */
+            struct page *x = memory_management_struct.pages_struct + page + l;
+            page_init(x, page_flags);
+          }
+          goto find_free_pages;
+        }
+      }
+    }
+  }
+  return NULL;
+
+find_free_pages:
+  /* 返回连续页面的第一页 struct page 结构 */
+  return (struct page *)(memory_management_struct.pages_struct + page);
+}

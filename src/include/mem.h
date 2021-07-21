@@ -39,7 +39,7 @@ int ZONE_UNMAPED_INDEX = 0; // above 1GB RAM，没有经过页表映射
 #define ZONE_NORMAL (1 << 1)
 #define ZONE_UNMAPED (1 << 2)
 
-
+/* 页面属性 */
 #define PG_PTable_Maped (1 << 0)
 #define PG_Kernel_Init (1 << 1)
 #define PG_Referenced (1 << 2)
@@ -131,6 +131,9 @@ struct page {
 };
 
 void init_memory();
+unsigned long page_init(struct page *page, unsigned long flags);
+unsigned long page_clean(struct page *page);
+struct page *alloc_pages(int zone_select, int number, unsigned long page_flags);
 extern struct Global_Memory_Descriptor memory_management_struct;
 extern unsigned long *Global_CR3;
 
