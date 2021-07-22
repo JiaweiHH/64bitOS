@@ -3,6 +3,7 @@
 #include "gate.h"
 #include "trap.h"
 #include "mem.h"
+#include "interrupt.h"
 
 /**
  * @brief 内核程序代码段和数据段的相关信息
@@ -18,7 +19,6 @@ struct Global_Memory_Descriptor memory_management_struct = {{0}, 0};
 
 void Start_Kernel(void) {
   int *addr = (int *)0xffff800000a00000;
-  int i;
 
   Pos.XResolution = 1440;
   Pos.YResolution = 900;
@@ -45,6 +45,10 @@ void Start_Kernel(void) {
   
   color_printk(RED, BLACK, "memory_init\n");
   init_memory();
+
+  color_printk(RED,BLACK,"interrupt init \n");
+  init_interrupt();
+
   while(1)
     ;
 }

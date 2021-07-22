@@ -104,7 +104,7 @@ error_code:
   
   movq  %rsp,   %rdi          /* 存入栈指针，给异常处理函数使用 */
   callq *%rdx                 /* 调用异常处理函数，带 * 表示绝对地址调用，否则表示相对地址调用 */
-  jmp   ret_from_exception    /* 还原被中断的现场 */
+  jmp   ret_from_exception    /* 还原被打断的现场 */
 
 /** 
  * 0 #DE 异常处理模块，该异常不会产生错误码

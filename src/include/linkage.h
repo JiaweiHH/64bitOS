@@ -13,8 +13,10 @@
 
 #define SYMBOL_NAME(X) X
 
+/* 预处理符号 # 强制将其后内容转化为字符串 */
 #define SYMBOL_NAME_STR(X) #X
 
+/* 符号 ## 用于字符串连接 */
 #define SYMBOL_NAME_LABEL(X) X##:
 
 /*
