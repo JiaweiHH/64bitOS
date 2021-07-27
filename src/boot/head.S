@@ -11,11 +11,11 @@
  * 最终 0xffff8... 被映射到物理地址 0x10 0000
  */
 
-.section .text
-/* start */
-.global _start
+#include "linkage.h"
 
-_start:
+.section .text
+
+ENTRY(_start)
   /* 初始化段寄存器，栈指针 */
   mov   $0x10,  %ax
   mov   %ax,    %ds
@@ -63,7 +63,7 @@ entry64:
   movq  %rax,   %es
   movq  %rax,   %gs
   movq  %rax,   %ss
-  movq  $0xffff800000007e00,  %rsp  /* 栈指针 */
+  movq  _stack_start(%rip),  %rsp  /* 栈指针 */
 
 /**
  * 初始化 IDT
@@ -201,6 +201,9 @@ Loop:
 	iretq
 int_msg:
 	.asciz "Unknow interrupt or fault at RIP\n"		/* asciz 分配一段专门存放字符串的空间，结尾会自动加 '\0' */
+
+ENTRY(_stack_start) /* 0 号进程栈基地址 */
+  .quad init_task_union + 32768
 
 /** 
  * 定义 64-bit 页表，每个页表项大小为 8B

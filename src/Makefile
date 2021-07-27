@@ -8,7 +8,7 @@ BOOT_OBJECTS = $(patsubst %.asm, %.bin, $(BOOT_SOURCES))
 
 
 ASM = nasm
-CFLAGS := -mcmodel=large -fno-builtin -m64 -fno-stack-protector -c -I include
+CFLAGS := -std=gnu99 -mcmodel=large -fno-builtin -m64 -fno-stack-protector -c -I include
 ASFLAGS := --64
 CPPFLAGS := -I include
 # 会出现重复定义的行为，使用链接器的 -z muldefs 参数表示当出现重复定义的时候只使用其中的一个
@@ -25,8 +25,9 @@ all: system
 	$(CPP) $(CPPFLAGS) $< > $(patsubst %.S, %.s, $<)
 	as $(ASFLAGS) -o $@ $(patsubst %.S, %.s, $<)
 
+# gcc 版本需要使用低版本的，过高的版本可能会导致编译出来的二进制代码运行时有问题
 %.o: %.c
-	gcc $(CFLAGS) -o $@ $<
+	gcc-4.8 $(CFLAGS) -o $@ $<
 
 system: $(S_OBJECTS) $(C_OBJECTS)
 	ld $(LDFLAGS) -o $@ boot/head.o $(C_OBJECTS) $(filter-out %head.o, $(S_OBJECTS))

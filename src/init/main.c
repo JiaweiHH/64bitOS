@@ -4,6 +4,7 @@
 #include "trap.h"
 #include "mem.h"
 #include "interrupt.h"
+#include "task.h"
 
 /**
  * @brief 内核程序代码段和数据段的相关信息
@@ -26,9 +27,7 @@ void Start_Kernel(void) {
   Pos.XCharSize = 8;
   Pos.YCharSize = 16;
   Pos.FB_addr = addr;
-  Pos.FB_length = Pos.XResolution * Pos.YResolution * 4;
-
-  color_printk(YELLOW, BLACK, "Hello World!\n");
+  Pos.FB_length = (Pos.XResolution * Pos.YResolution * 4 + PAGE_4K_SIZE - 1) & PAGE_4K_MASK;
 
   // load_TR(8);
   set_tss64(0xffff800000007c00, 0xffff800000007c00, 0xffff800000007c00,
@@ -46,8 +45,11 @@ void Start_Kernel(void) {
   color_printk(RED, BLACK, "memory_init\n");
   init_memory();
 
-  color_printk(RED,BLACK,"interrupt init \n");
+  color_printk(RED, BLACK, "interrupt init\n");
   init_interrupt();
+
+  color_printk(RED, BLACK, "task_init\n");
+  task_init();
 
   while(1)
     ;

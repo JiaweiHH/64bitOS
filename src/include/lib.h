@@ -3,6 +3,14 @@
 
 #define NULL 0
 
+/**
+ * @brief 通过成员指针获取结构体指针
+ * @param ptr: 结构体中已经获取的成员指针
+ * @param type: 结构体类型
+ * @param member: ptr 在结构体中的成员名
+ * tmp = (unsigned long)&(((type *)0)->member) 表示 member 成员相对于结构体起始位置的偏移
+ * (type *)((unsigned long)p - tmp 表示从 p 的位置出发减去 tmp 个偏移，也就是结构体的起始位置
+ */
 #define container_of(ptr, type, member)                                        \
   ({                                                                           \
     typeof(((type *)0)->member) *p = (ptr);                                    \
