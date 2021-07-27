@@ -118,6 +118,13 @@ ENTRY(divide_error)
   xchgq %rax, (%rsp)                  /* 交换栈顶的值和 rax 的值 */
   jmp   error_code
 
+ENTRY(debug)
+	pushq	$0
+	pushq	%rax
+	leaq	do_debug(%rip),	%rax
+	xchgq	%rax,	(%rsp)
+	jmp	error_code
+
 /* 2 NMI 不可屏蔽中断，不会产生错误码 */
 ENTRY(nmi)
   pushq $0
@@ -126,6 +133,55 @@ ENTRY(nmi)
   xchgq %rax, (%rsp)
   jmp   error_code
 
+ENTRY(int3)
+	pushq	$0
+	pushq	%rax
+	leaq	do_int3(%rip),	%rax
+	xchgq	%rax,	(%rsp)
+	jmp	error_code
+
+ENTRY(overflow)
+	pushq	$0
+	pushq	%rax
+	leaq	do_overflow(%rip),	%rax
+	xchgq	%rax,	(%rsp)
+	jmp	error_code
+
+ENTRY(bounds)
+	pushq	$0
+	pushq	%rax
+	leaq	do_bounds(%rip),	%rax
+	xchgq	%rax,	(%rsp)
+	jmp	error_code
+
+ENTRY(undefined_opcode)
+	pushq	$0
+	pushq	%rax
+	leaq	do_undefined_opcode(%rip),	%rax
+	xchgq	%rax,	(%rsp)
+	jmp	error_code
+
+ENTRY(dev_not_available)	/* need rewrite */
+	pushq	$0
+	pushq	%rax
+	leaq	do_dev_not_available(%rip),	%rax
+	xchgq	%rax,	(%rsp)
+	jmp	error_code
+
+
+ENTRY(double_fault)
+	pushq	%rax
+	leaq	do_double_fault(%rip),	%rax
+	xchgq	%rax,	(%rsp)
+	jmp	error_code
+
+ENTRY(coprocessor_segment_overrun)
+	pushq	$0
+	pushq	%rax
+	leaq	do_coprocessor_segment_overrun(%rip),	%rax
+	xchgq	%rax,	(%rsp)
+	jmp	error_code
+
 /* 10 #TS. 无效的 TSS 段，会产生错误码，因此不需要向栈中压入 0 占位 */
 ENTRY(invalid_TSS)
   pushq %rax
@@ -133,10 +189,61 @@ ENTRY(invalid_TSS)
   xchgq %rax, (%rsp)
   jmp   error_code
 
+ENTRY(segment_not_present)
+	pushq	%rax
+	leaq	do_segment_not_present(%rip),	%rax
+	xchgq	%rax,	(%rsp)
+	jmp	error_code
+
+ENTRY(stack_segment_fault)
+	pushq	%rax
+	leaq	do_stack_segment_fault(%rip),	%rax
+	xchgq	%rax,	(%rsp)
+	jmp	error_code
+
+ENTRY(general_protection)
+	pushq	%rax
+	leaq	do_general_protection(%rip),	%rax
+	xchgq	%rax,	(%rsp)
+	jmp	error_code
+
 /* 14 #PF. 页错误 */
 ENTRY(page_fault)
   pushq %rax
   leaq  do_page_fault(%rip),  %rax
   xchgq %rax, (%rsp)
   jmp   error_code
-  
+
+ENTRY(x87_FPU_error)
+	pushq	$0
+	pushq	%rax
+	leaq	do_x87_FPU_error(%rip),	%rax
+	xchgq	%rax,	(%rsp)
+	jmp	error_code
+
+ENTRY(alignment_check)
+	pushq	%rax
+	leaq	do_alignment_check(%rip),	%rax
+	xchgq	%rax,	(%rsp)
+	jmp	error_code
+
+ENTRY(machine_check)
+	pushq	$0
+	pushq	%rax
+	leaq	do_machine_check(%rip),	%rax
+	xchgq	%rax,	(%rsp)
+	jmp	error_code
+
+ENTRY(SIMD_exception)
+	pushq	$0
+	pushq	%rax
+	leaq	do_SIMD_exception(%rip),	%rax
+	xchgq	%rax,	(%rsp)
+	jmp	error_code
+
+ENTRY(virtualization_exception)
+	pushq	$0
+	pushq	%rax
+	leaq	do_virtualization_exception(%rip),	%rax
+	xchgq	%rax,	(%rsp)
+	jmp	error_code
