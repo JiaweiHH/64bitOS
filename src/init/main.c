@@ -29,7 +29,7 @@ void Start_Kernel(void) {
   Pos.FB_addr = addr;
   Pos.FB_length = (Pos.XResolution * Pos.YResolution * 4 + PAGE_4K_SIZE - 1) & PAGE_4K_MASK;
 
-  // load_TR(8);
+  // load_TR(10);
   set_tss64(0xffff800000007c00, 0xffff800000007c00, 0xffff800000007c00,
             0xffff800000007c00, 0xffff800000007c00, 0xffff800000007c00,
             0xffff800000007c00, 0xffff800000007c00, 0xffff800000007c00,

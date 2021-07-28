@@ -377,4 +377,26 @@ static inline void io_out32(unsigned short port, unsigned int value) {
                        "c"(nr)                                                 \
                        : "memory")
 
+static inline unsigned long rdmsr(unsigned long address) {
+  unsigned int tmp0 = 0;
+  unsigned int tmp1 = 0;
+  __asm__ __volatile__("rdmsr	\n\t"
+                       : "=d"(tmp0), "=a"(tmp1)
+                       : "c"(address)
+                       : "memory");
+  return (unsigned long)tmp0 << 32 | tmp1;
+}
+
+/**
+ * @brief 设置 MSR 寄存器组
+ * 
+ * @param address 寄存器组中的地址
+ * @param value   需要设置的值，wrmsr 指令设置的值通过 EDX + EAX 组成
+ */
+static inline void wrmsr(unsigned long address, unsigned long value) {
+  __asm__ __volatile__("wrmsr	\n\t" ::"d"(value >> 32),
+                       "a"(value & 0xffffffff), "c"(address)
+                       : "memory");
+}
+
 #endif

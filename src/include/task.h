@@ -18,6 +18,7 @@ extern char _end;
 
 extern unsigned long _stack_start;  /* 在 head.S 中定义 */
 extern void ret_from_intr();
+extern void ret_system_call();
 
 /* 数据段 */
 #define KERNEL_CS (0x08)

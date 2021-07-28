@@ -6,9 +6,48 @@
 #include "printk.h"
 #include "ptrace.h"
 
+void user_level_function() {
+	color_printk(RED, BLACK, "user_level_function task is running\n");
+	while(1);
+}
+
+/**
+ * @brief 手动设置 regs 来构造出新的执行环境
+ * 当 do_execve 函数返回的时候会跳转至 ret_system_call，进而把 regs 还原到各个寄存器中
+ * 
+ * @param regs 
+ * @return unsigned long 
+ */
+unsigned long do_execve(struct pt_regs *regs) {
+	/**
+	 * 0x800000 的选择只要是一个未使用的内存空间都可以，
+	 * 0xa00000 是为了与 0x800000 在同一个物理页内
+	 */
+	regs->rdx = 0x800000;		/* SYSEXIT 指令会使用 RDX 寄存器的值作为用户层的 RIP */
+	regs->rcx = 0xa00000;		/* SYSEXIT 指令会使用 RCX 寄存器的值作为用户层的 RSP */
+	regs->rax = 1;					/* 系统调用的返回值 */
+	regs->ds = regs->es = 0;
+	color_printk(RED, BLACK, "do_execve task is running\n");
+
+	/* 将用户层的执行函数复制到用户层的第一条指令开始地址处 */
+	memcpy(user_level_function, (void *)regs->rdx, 1024);
+	return 0;
+}
+
 unsigned long init(unsigned long arg) {
-	color_printk(RED,BLACK,"init task is running,arg:%#018lx\n",arg);
-	return 1;
+  struct pt_regs *regs;
+  color_printk(RED, BLACK, "init task is running,arg:%#018lx\n", arg);
+	
+	/* do_execve 的返回地址 */
+  current->thread->rip = (unsigned long)ret_system_call;
+  current->thread->rsp = (unsigned long)current + STACK_SIZE - sizeof(struct pt_regs);
+  regs = (struct pt_regs *)current->thread->rsp;
+  __asm__ __volatile__("movq	%1,	%%rsp \n\t"
+                       "pushq	%2 \n\t"				/* 将返回地址压入栈中，等待 ret 指令执行 */
+                       "jmp	do_execve	\n\t" 	/* do_execve 为新程序准备执行环境，RDI 寄存器存放了 do_execve 的参数即 regs */
+											 ::"D"(regs), "m"(current->thread->rsp), "m"(current->thread->rip)
+                       : "memory");
+  return 1;
 }
 
 /**
@@ -89,10 +128,10 @@ __asm__("kernel_thread_func:  \n\t"
         "popq %rax  \n\t"
         "movq %rax, %es \n\t"
         "popq %rax  \n\t"
-        "addq $0x38,  %rsp \n\t"
+        "addq $0x38,  %rsp \n\t"	/* 0x38 = 56 直接跳过了栈中 pt_regs 从 func 开始的最后 7 个数据 */
         "movq %rdx, %rdi  \n\t"
         "callq  *%rbx \n\t"
-        "movq %rax, %rdi  \n\t" /* call *rbx 的返回值保存到 rdi 作为下一个函数的参数 */
+        "movq %rax, %rdi  \n\t" 	/* call *rbx 的返回值保存到 rdi 作为下一个函数的参数 */
         "callq  do_exit \n\t");
 
 /* 初始化进程的 task_struct 和 thread_struct 结构体 */
@@ -133,7 +172,7 @@ unsigned long do_fork(struct pt_regs *regs, unsigned long clone_flags,
 
   /* 如果不是内核线程，将进程的第一条指令更改为 ret_from_intr，直接从栈上恢复现场 */
   if(!(tsk->flags & PF_KTHREAD))
-    thd->rip = regs->rip = (unsigned long)ret_from_intr;  /* 这里更改 RIP 并不会影响已经保存在栈上的寄存器值(memcpy 那一行) */
+    thd->rip = regs->rip = (unsigned long)ret_system_call;  /* 这里更改 RIP 并不会影响已经保存在栈上的寄存器值(memcpy 那一行) */
 
   tsk->state = TASK_RUNNING;  /* 设置进程的状态 */
   return 0;
@@ -171,6 +210,9 @@ void task_init() {
   init_mm.start_brk = 0;
   init_mm.end_brk = memory_management_struct.end_brk;
   init_mm.start_stack = _stack_start;
+
+	/* 设置 IA32_SYSENTER_CS 寄存器 */
+	wrmsr(0x174, KERNEL_CS);
 
   /* 初始化内存中的 TSS */
   set_tss64(init_thread.rsp0, init_tss[0].rsp1, init_tss[0].rsp2,

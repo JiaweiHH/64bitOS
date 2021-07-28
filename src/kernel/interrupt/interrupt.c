@@ -5,6 +5,11 @@
 #include "linkage.h"
 #include "printk.h"
 
+/**
+ * @brief 中断和异常的区别大概就在于芯片的操作上面吧
+ * 
+ */
+
 /* 保存中断的上下文，过程和异常上下文保存大致一样 */
 #define SAVE_ALL                                                               \
   "cld;               \n\t"                                                    \

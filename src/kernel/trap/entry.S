@@ -247,3 +247,31 @@ ENTRY(virtualization_exception)
 	leaq	do_virtualization_exception(%rip),	%rax
 	xchgq	%rax,	(%rsp)
 	jmp	error_code
+
+ENTRY(ret_system_call)
+  movq  %rax, 0x80(%rsp)  /* 保存系统调用的返回值到栈上对应的位置上 */
+  popq  %r15
+  popq  %r14
+  popq  %r13
+  popq  %r12		
+	popq  %r11		
+	popq  %r10		
+	popq  %r9
+	popq  %r8
+	popq  %rbx
+	popq  %rcx
+	popq  %rdx
+	popq  %rsi
+	popq  %rdi
+	popq  %rbp
+  popq  %rax  /* 这个是 DS */
+  movq  %rax, %ds
+  popq  %rax  /* 这个是 ES */
+  movq  %rax, %es
+  popq  %rax  /* 这个才是真正的 rax */
+  addq  $0x38,  %rsp  /* 跳过从 func 开始的 56 bytes（对应了 7 个 long long 变量） */
+                      /* 对于中断和异常来说只能跳过 0x10 也就是 func 和 errorcode，因为栈上后续的变量会被 cpu 使用拿来恢复 ss, cs, rip, rsp, eflags 等 */
+                      /* 而对于系统调用返回指令 SYSEXIT 来说，cs, ss 由 IA32_SYSENTER_CS 提供，RIP 由 RDX 提供，RSP 由 RCX 提供 */
+  
+  .byte 0x48  /* 0x48 修饰 sysexit 前缀，表示要返回到 64 位模式的应用层 */
+  sysexit     /* sysexit 需要借助 RDX 和 RCX 来恢复应用程序的执行线程，这两个寄存器由应用程序在进入内核层之前特殊处理 */

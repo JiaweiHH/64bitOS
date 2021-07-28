@@ -112,11 +112,11 @@ set_TSS64:
   addq  %rcx,   %rax                /* rax = 0x??00 89?? ???? 0000，? 的意思和上述一样 */
   addq  $103,   %rax                /* 103 = 0x67，rax = 0x??00 89?? ???? 0067 */
   leaq  GDT_Table(%rip),  %rdi      /* rdi 保存 GDT_Table 的首地址 */
-  movq  %rax,   64(%rdi)            /* GDT_Table 的第 8 个 entry 保存 rax 的值，实际上 rax 的值就是 TSS 段描述符 */
+  movq  %rax,   80(%rdi)            /* GDT_Table 的第 10 个 entry 保存 rax 的值，实际上 rax 的值就是 TSS 段描述符 */
   shrq  $32,    %rdx                /* rdx 保留 TSS_Table 的高 32bit */
-  movq  %rdx,   72(%rdi)            /* 第 9 个 entry 保存 TSS_Table 地址的高 32bit */
+  movq  %rdx,   88(%rdi)            /* 第 11 个 entry 保存 TSS_Table 地址的高 32bit */
 
-  mov   $0x40,  %ax                 /* ax 变成 TSS 段选择子，ax = 0000 0000 0100 0000，第 4bit 开始是索引号，刚好等于 8 */
+  mov   $0x50,  %ax                 /* ax 变成 TSS 段选择子，ax = 0000 0000 0101 0000，第 4bit 开始是索引号，刚好等于 10 */
   ltr   %ax                         /* 加载 TSS 描述符到 TR 寄存器 */
 
   /* 这里同样是利用 lretq 模拟 ljmp */
@@ -219,29 +219,29 @@ __PML4E:
 
 .org    0x2000
 __PDPTE:
-  .quad   0x103003    /* 不管是高地址还是低地址，对应的 PDPTE 索引都是 0 */
+  .quad   0x103007    /* 不管是高地址还是低地址，对应的 PDPTE 索引都是 0 */
   .fill   511, 8, 0   /* 填充剩余的 PDPTE */
 
 /* PDE 的最后 8-bit 中的第 7-bit 都是 1，表示开启了 2MB 的 page size */
 .org    0x3000
 __PDE:
   /* 0x...0000 在 PDT 中的索引为 0x00 */
-  .quad   0x000083    /* 映射前 10MB 的物理地址到 0x00 和 0xffff 8000 0000 0000 */
-  .quad   0x200083
-  .quad   0x400083
-  .quad   0x600083
-  .quad   0x800083
+  .quad   0x000087    /* 映射前 10MB 的物理地址到 0x00 和 0xffff 8000 0000 0000 */
+  .quad   0x200087
+  .quad   0x400087
+  .quad   0x600087
+  .quad   0x800087
   /* 0x...a00000 在 PDT 中的索引为 0x05 */
-  .quad   0xe0000083  /* 映射 0xe0000000 开始的 16MB 物理地址到 0xa00000 和 0xffff 8000 00a0 0000 */
+  .quad   0xe0000087  /* 映射 0xe0000000 开始的 16MB 物理地址到 0xa00000 和 0xffff 8000 00a0 0000 */
                       /* 0xe0000083 物理内存对应的是帧缓存，用来在屏幕上显示颜色，帧缓存的每个存储单元对应一个像素 */
                       /* 这里的帧缓存由于之前在 loader 程序中设置过，每个像素点的颜色深度为 32-bit */
-  .quad   0xe0200083
-  .quad   0xe0400083
-  .quad   0xe0600083
-  .quad   0xe0800083
-  .quad   0xe0a00083
-  .quad   0xe0c00083
-  .quad   0xe0e00083
+  .quad   0xe0200087
+  .quad   0xe0400087
+  .quad   0xe0600087
+  .quad   0xe0800087
+  .quad   0xe0a00087
+  .quad   0xe0c00087
+  .quad   0xe0e00087
   .fill   499, 8, 0   /* 填充剩余的表项 */
 
 
@@ -257,16 +257,24 @@ __PDE:
  * 链接器只能处理全局符号
  * 另外 GDT_Table 在这里只表示一个内存地址而已，在 C 中使用则会表示一个变量
  */
+/**
+ * 这里增加了 32bit User Code 和 32bit User Data，这是为了系统调用的 sysexit 指令设置的
+ * 1. 该指令会从 IA32_SYSENTER_CS[15:0] + 0x20 获取用户层 CS 段选择子
+ * 2. 从 CS + 0x08 获取栈段选择子
+ * 所以需要在 64bit User 段前面添加两个段，这样 64bit 用户段就从 0x20 之后开始了
+ */
 .global GDT_Table
 GDT_Table:
   /* .quad 表示对于每个数，从当前位置开始分配 8-byte 存放 */
   .quad   0x0000000000000000    /* 0 NULL 描述符 */
-  .quad	  0x0020980000000000    /* 1 KERNEL Code 64-bit, Segment 0x08 */
+  .quad	  0x0020980000000000    /* 1  KERNEL Code 64-bit, Segment 0x08 */
   .quad	  0x0000920000000000		/* 2	KERNEL Data	64-bit, Segment 0x10 */
-	.quad	  0x0020f80000000000		/* 3	USER Code 64-bit, Segment 0x18 */
-	.quad	  0x0000f20000000000		/* 4	USER Data	64-bit, Segment 0x20 */
-	.quad	  0x00cf9a000000ffff		/* 5	KERNEL Code 32-bit, Segment 0x28 */
-	.quad	  0x00cf92000000ffff		/* 6	KERNEL Data 32-bit, Segment	0x30 */
+  .quad   0x0000000000000000    /* 3  USER   Code 32-bit, Segment 0x18 */
+  .quad   0x0000000000000000    /* 4  USER   Data 32-bit, Segment 0x20 */
+	.quad	  0x0020f80000000000		/* 5	USER   Code 64-bit, Segment 0x28 */
+	.quad	  0x0000f20000000000		/* 6	USER   Data	64-bit, Segment 0x30 */
+	.quad	  0x00cf9a000000ffff		/* 7	KERNEL Code 32-bit, Segment 0x38 */
+	.quad	  0x00cf92000000ffff		/* 8	KERNEL Data 32-bit, Segment	0x40 */
   .fill   10,8,0                /* fill repeat, size, value */
 GDT_END:
 

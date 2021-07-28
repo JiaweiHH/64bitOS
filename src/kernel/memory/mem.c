@@ -284,9 +284,9 @@ void init_memory() {
                *phy_to_virt(Global_CR3) & (~0xff));
   color_printk(PURPLE, BLACK, "**Global_CR3\t: %#018lx\n",              /* 打印 PDE 首地址 */
                *phy_to_virt(*phy_to_virt(Global_CR3) & (~0xff)) & (~0xff));
-  for(int i = 0; i < 10; ++i) {   /* 清空 PML4E 的前 10 个 entry（其实只要第一个就好了） */
-    *(phy_to_virt(Global_CR3) + i) = 0UL;
-  }
+  // for(int i = 0; i < 10; ++i) {   /* 清空 PML4E 的前 10 个 entry（其实只要第一个就好了） */
+  //   *(phy_to_virt(Global_CR3) + i) = 0UL;
+  // }
   flush_tlb();
 }
 
