@@ -5,6 +5,7 @@
 #include "mem.h"
 #include "printk.h"
 #include "ptrace.h"
+#include "system_call.h"
 
 extern void ret_from_intr(void);
 extern void ret_system_call(void);
@@ -33,15 +34,16 @@ unsigned long system_call_function(struct pt_regs *regs) {
 void user_level_function() {
   color_printk(RED, BLACK, "user_level_function task is running\n");
   long ret = 0;
+  char string[] = "Hello World!\n";
 
   __asm__ __volatile__("leaq	sysexit_return_address(%%rip),	%%rdx	\n\t"		/* 设置返回地址到 RDX 寄存器，SYSEXIT 指令会把它加载到 RIP 寄存器 */
                        "movq	%%rsp,	%%rcx	\n\t"														/* 设置用户层的栈顶寄存器到 RDX，SYSEXIT 指令会把它加载到 RSP 寄存器 */
                        "sysenter	\n\t"																			/* 执行 SYSENTER 指令，进入内核层 */
                        "sysexit_return_address:	\n\t"												/* 系统调用执行完毕的返回地址 */
                        : "=a"(ret)																					/* 系统调用执行的返回结果保存在 rax 中，并赋值给 ret */
-                       : "0"(15)																						/* rax 保存系统调用号 */
+                       : "0"(1), "D"(string)															  /* rax 保存系统调用号 */
                        : "memory");
-  color_printk(RED, BLACK, "user_level_function task called sysenter, ret:%ld\n", ret);
+  // color_printk(RED, BLACK, "user_level_function task called sysenter, ret:%ld\n", ret);
   while (1)
     ;
 }
