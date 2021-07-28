@@ -248,6 +248,47 @@ ENTRY(virtualization_exception)
 	xchgq	%rax,	(%rsp)
 	jmp	error_code
 
+ENTRY(system_call)
+	sti									/* SYSENTER 指令会复位 IF 中断标志位，因此此处需要重新开启中断 */
+  subq  $0x38,  %rsp  /* 跳过前面提到过的最后 7 个字段 */
+  cld;
+
+  pushq %rax          /* rax 传递系统调用号 */
+  movq  %es,  %rax
+  pushq %rax
+  movq  %ds,  %rax
+  pushq %rax
+  xorq  %rax, %rax
+  pushq %rbp
+	pushq %rdi
+	pushq %rsi
+	pushq %rdx
+	pushq %rcx
+	pushq %rbx
+	pushq %r8
+	pushq %r9
+	pushq %r10
+	pushq %r11
+	pushq %r12
+	pushq %r13
+	pushq %r14
+	pushq %r15
+  movq  $0x10,  %rdx  /* 设置数据段寄存器为 0x10 即内核数据段 */
+  movq  %rdx, %ds
+  movq  %rdx, %es
+
+  movq  %rsp, %rdi    /* 将栈指针作为参数，调用 system_call_function */
+  callq system_call_function	/* callq 之后会继续往下执行，系统调用返回 */
+
+/**
+ * SYSEXIT 指令从 0 特权级跳转至 3 特权级
+ * CS 段选择子的值会从 IA32_SYSENTER_CS[15:0] + 0x20 获取
+ * SS 段选择子的值会从 CS + 0x08 获取
+ * RIP 寄存器的值会从 RDX 寄存器获取，它需要用户层执行系统调用前自己特殊处理
+ * RSP 寄存器的值会从 RCX 寄存器获取
+ *
+ * SYSEXIT 指令不会从描述符表中加载段描述符到 CS 和 SS，取而代之的是向寄存器写入固定的值
+ */
 ENTRY(ret_system_call)
   movq  %rax, 0x80(%rsp)  /* 保存系统调用的返回值到栈上对应的位置上 */
   popq  %r15
@@ -271,7 +312,7 @@ ENTRY(ret_system_call)
   popq  %rax  /* 这个才是真正的 rax */
   addq  $0x38,  %rsp  /* 跳过从 func 开始的 56 bytes（对应了 7 个 long long 变量） */
                       /* 对于中断和异常来说只能跳过 0x10 也就是 func 和 errorcode，因为栈上后续的变量会被 cpu 使用拿来恢复 ss, cs, rip, rsp, eflags 等 */
-                      /* 而对于系统调用返回指令 SYSEXIT 来说，cs, ss 由 IA32_SYSENTER_CS 提供，RIP 由 RDX 提供，RSP 由 RCX 提供 */
+                      /* 而对于系统调用返回指令 SYSEXIT 来说，在通过 SYSENTER 指令进入内核层时处理器就不会保存用户的状态信息，所以可以直接跳过 */
   
   .byte 0x48  /* 0x48 修饰 sysexit 前缀，表示要返回到 64 位模式的应用层 */
   sysexit     /* sysexit 需要借助 RDX 和 RCX 来恢复应用程序的执行线程，这两个寄存器由应用程序在进入内核层之前特殊处理 */

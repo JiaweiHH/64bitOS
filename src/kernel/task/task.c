@@ -6,9 +6,44 @@
 #include "printk.h"
 #include "ptrace.h"
 
+extern void ret_from_intr(void);
+extern void ret_system_call(void);
+extern void system_call(void);
+
+/**
+ * @brief 根据 regs 中保存的系统调用号，分发系统调用处理函数
+ * 
+ * @param regs 上下文参数
+ */
+unsigned long system_call_function(struct pt_regs *regs) {
+	return system_call_table[regs->rax](regs);
+}
+
+/**
+ * @brief 执行系统调用的过程
+ * 1. 用户层将执行完系统调用的返回地址保存到 RDX，将执行完系统调用的栈地址保存到 RCX
+ * 2. 指定系统调用号
+ * 3. 执行 SYSENTER 执行系统调用
+ * 4.1 SYSENTER 指令会从 IA32_SYSENTER_EIP 上取得系统调用的入口地址
+ * 4.2 SYSENTER 指令从 IA32_ENTER_ESP 上取得系统调用使用的 RSP
+ * 4.3 SYSENTER 指令从 IA32_ENTER_CS 上取得 SS, CS 段选择子，并设置段描述符
+ * 5. 进入系统调用入口地址函数 system_call，该函数会保存通用寄存器
+ * 6. 调用 system_call_function，根据系统调用号分配处理函数，然后执行系统调用处理函数
+ */
 void user_level_function() {
-	color_printk(RED, BLACK, "user_level_function task is running\n");
-	while(1);
+  color_printk(RED, BLACK, "user_level_function task is running\n");
+  long ret = 0;
+
+  __asm__ __volatile__("leaq	sysexit_return_address(%%rip),	%%rdx	\n\t"		/* 设置返回地址到 RDX 寄存器，SYSEXIT 指令会把它加载到 RIP 寄存器 */
+                       "movq	%%rsp,	%%rcx	\n\t"														/* 设置用户层的栈顶寄存器到 RDX，SYSEXIT 指令会把它加载到 RSP 寄存器 */
+                       "sysenter	\n\t"																			/* 执行 SYSENTER 指令，进入内核层 */
+                       "sysexit_return_address:	\n\t"												/* 系统调用执行完毕的返回地址 */
+                       : "=a"(ret)																					/* 系统调用执行的返回结果保存在 rax 中，并赋值给 ret */
+                       : "0"(15)																						/* rax 保存系统调用号 */
+                       : "memory");
+  color_printk(RED, BLACK, "user_level_function task called sysenter, ret:%ld\n", ret);
+  while (1)
+    ;
 }
 
 /**
@@ -34,6 +69,15 @@ unsigned long do_execve(struct pt_regs *regs) {
 	return 0;
 }
 
+/**
+ * @brief 进入用户层的步骤
+ * 1. 设置好 do_execve 函数的返回地址为 ret_system_call，该函数返回时会从此地址开始执行
+ * 2. 设置好执行 ret_system_call 时的栈顶指针为 regs 结构体
+ * 3. 进入 do_execve 设置 SYSEXIT 指令使用到的 RDX 和 RCX，将用户层函数的地址拷贝到第一条指令处
+ * 4. do_execve 函数返回，执行 ret_system_call
+ * 5. ret_system_call 函数会根据 regs 恢复执行现场，最后执行一个 SYSEXIT 指令设置 RIP, RSP, SS, CS
+ * 6. 从 RIP 寄存器指定的指令地址，继续执行，此时就开始执行用户层的代码了
+ */
 unsigned long init(unsigned long arg) {
   struct pt_regs *regs;
   color_printk(RED, BLACK, "init task is running,arg:%#018lx\n", arg);
@@ -211,8 +255,12 @@ void task_init() {
   init_mm.end_brk = memory_management_struct.end_brk;
   init_mm.start_stack = _stack_start;
 
-	/* 设置 IA32_SYSENTER_CS 寄存器 */
+	/* 设置 IA32_SYSENTER_CS 寄存器，SYSENTER 和 SYSEXIT 指令都会用到 */
 	wrmsr(0x174, KERNEL_CS);
+	/* IA32_SYSENTER_ESP，SYSENTER 指令会将该寄存器里面的值载入到 RSP 寄存器中 */
+	wrmsr(0x175, current->thread->rsp0);
+	/* IA32_ENTER_EIP，SYSENTER 指令会将该寄存器的值载入到 RIP 寄存器中 */
+	wrmsr(0x176, (unsigned long)system_call);
 
   /* 初始化内存中的 TSS */
   set_tss64(init_thread.rsp0, init_tss[0].rsp1, init_tss[0].rsp2,
